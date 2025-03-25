@@ -52,3 +52,7 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+masked_data.bin 
+masked_data.json
+masked_dataSemiSafe.json
