@@ -6,16 +6,36 @@ using System.Runtime.InteropServices;
 using System.Text; // Add this for Encoding
 using System.Text.Json;
 using System.Diagnostics;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 // HIPAA-sensitive patient record
 public record PatientRecord(string Name, int Age, string Diagnosis);
 
 public static class Program
 {
+//    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+//    private static string
+    private static void highPerfJsonifier(ReadOnlySpan<PatientRecord> records){
+      var buffer = new ArrayBufferWriter<byte>(1024 * 1024);
+      using var writer = new Utf8JsonWriter(buffer);
+
+      writer.WriteStartArray(); //the first bracket [
+      foreach(var record in records){
+        writer.WriteStartObject(); //The first curled brace that encapsulates the one object
+        writer.WriteString("Name", record.Name);
+        writer.WriteNumber("Age", record.Age);
+        writer.WriteString("Diagnosis", record.Diagnosis);
+        writer.WriteEndObject();
+      }
+
+      writer.WriteEndArray(); //The last bracked ]
+      writer.Flush();
+
+      File.WriteAllBytes("masked_data_highperf.json", buffer.WrittenSpan.ToArray());
+    }
+
     private static void safe(){
-      Stopwatch stopwatch = new Stopwatch();
-      stopwatch.Start();
-    
       const int MaxRecords = 1_000_000;
       PatientRecord[] records = new PatientRecord[MaxRecords];
       for(uint i = 0; i < MaxRecords; i++){    
@@ -26,8 +46,6 @@ public static class Program
           );
       }
 
-      stopwatch.Stop();
-      Console.WriteLine($"The time taken for safe data Geneartion is: {stopwatch.ElapsedMilliseconds} ms");
       for(uint i = 0; i < MaxRecords; i++){
           var record = records[i];
           var maskedName = record.Name.Length > 0 
@@ -35,12 +53,16 @@ public static class Program
               : string.Empty;
           records[i] = record with { Name = maskedName };
       }          
+      Stopwatch stopwatch = new Stopwatch();
+      stopwatch.Start();
       
       File.WriteAllText("masked_data.json",
           JsonSerializer.Serialize( records,
           new JsonSerializerOptions {WriteIndented = true }
           )
       );
+      stopwatch.Stop();
+      Console.WriteLine($"The time taken for old JSonification of data is: {stopwatch.ElapsedMilliseconds} ms");
       //stopwatch.Stop();
       //Console.WriteLine($"Time taken for the safe code: {stopwatch.ElapsedMilliseconds} ms");
     }
@@ -97,11 +119,10 @@ public static class Program
                 Diagnosis: i % 100 == 0 ? "Cancer" : "Flu"
             );
         });
-        stopwatch.Stop();
-        Console.WriteLine($"The time taken for unsafe data Geneartion is: {stopwatch.ElapsedMilliseconds} ms");
+        //stopwatch.Stop();
+        //Console.WriteLine($"The time taken for unsafe data Geneartion is: {stopwatch.ElapsedMilliseconds} ms");
 
-        // 2. Process with zero-copy and SIMD-ready spans
-        var outputBuffer = (byte*)NativeMemory.Alloc((nuint)(MaxRecords * 128));
+       var outputBuffer = (byte*)NativeMemory.Alloc((nuint)(MaxRecords * 128));
         try
         {
             Parallel.For(0, MaxRecords, i =>
